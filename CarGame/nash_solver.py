@@ -28,7 +28,7 @@ class NashSolver:
         bounds = [(None, None)] + [(0, 1)] * n_a
         
         res = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, 
-                     bounds=bounds, method='highs')
+                    bounds=bounds, method='highs')
         
         if res.success:
             value = res.x[0]
@@ -37,10 +37,18 @@ class NashSolver:
             value = 0
             policy_a = np.ones(n_a) / n_a
         
+        # FIX: Ensure policy_a is valid
+        policy_a = np.maximum(policy_a, 0)
+        if np.sum(policy_a) <= 0:
+            policy_a = np.ones(n_a) / n_a
+        else:
+            policy_a = policy_a / np.sum(policy_a)
+        
         # Player B's best response (minimizer)
         expected = payoff_matrix.T @ policy_a
         policy_b = np.zeros(n_b)
-        policy_b[np.argmin(expected)] = 1
+        best_idx = np.argmin(expected)
+        policy_b[best_idx] = 1
         
         return policy_a, policy_b, value, -value
     

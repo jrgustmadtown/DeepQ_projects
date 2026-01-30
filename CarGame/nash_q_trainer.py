@@ -1,13 +1,11 @@
 import numpy as np
-from nash_q_trainer import NashQLearner
-from nash_solver import NashSolver
+from nash_q_learner import NashQLearner
 
 class NashQTrainer:
-    """Coordinates Nash Q-learning training"""
+    """Coordinates Nash Q-learning for SEQUENTIAL game"""
     
     def __init__(self, game):
         self.game = game
-        self.solver = NashSolver()
         self.agent_a = None
         self.agent_b = None
         
@@ -16,80 +14,53 @@ class NashQTrainer:
         self.agent_a = NashQLearner(0, alpha, gamma, epsilon)
         self.agent_b = NashQLearner(1, alpha, gamma, epsilon)
     
-    def _compute_payoff_matrix(self, state, actions_a, actions_b, agent_id):
-        """Build payoff matrix from Q-values"""
-        n_a, n_b = len(actions_a), len(actions_b)
-        payoff = np.zeros((n_a, n_b))
-        
-        for i, a_i in enumerate(actions_a):
-            for j, a_j in enumerate(actions_b):
-                if agent_id == 0:
-                    payoff[i, j] = self.agent_a.get_q_value(state, a_i, a_j)
-                else:
-                    payoff[i, j] = self.agent_b.get_q_value(state, a_j, a_i)
-        
-        return payoff
-    
-    def train_episode(self, max_steps=50):
-        """Train for one episode"""
-        state = self.game.get_initial_state()
+    def train_episode(self, max_steps=100):
+        """Train for one episode with alternating turns"""
+        state = self.game.reset()  # This also resets current_turn to 0 (A's turn)
         total_reward_a = 0
         total_reward_b = 0
         
-        for _ in range(max_steps):
-            pos_a, pos_b = self.game.state_to_positions(state)
+        for step in range(max_steps):
+            # Get current player
+            current_player = self.game.get_current_player()
             
-            # Available actions
-            actions_a = self.game.get_available_actions(pos_a)
-            actions_b = self.game.get_available_actions(pos_b)
+            if current_player == 0:
+                agent = self.agent_a
+                opponent = self.agent_b
+            else:
+                agent = self.agent_b
+                opponent = self.agent_a
             
-            if not actions_a or not actions_b:
+            # Get available actions
+            available_actions = self.game.get_available_actions(state)
+            
+            if not available_actions:
                 break
             
-            # Build payoff matrices
-            payoff_a = self._compute_payoff_matrix(state, actions_a, actions_b, 0)
-            payoff_b = self._compute_payoff_matrix(state, actions_a, actions_b, 1)
+            # Choose action
+            action = agent.choose_action(available_actions, state, opponent)
             
-            # Compute Nash equilibrium (using A's payoff since it's zero-sum)
-            policy_a_vec, policy_b_vec, nash_q_a, nash_q_b = self.solver.solve_zero_sum(payoff_a)
-            
-            # Convert to policy dictionaries
-            policy_a = {action: prob for action, prob in zip(actions_a, policy_a_vec)}
-            policy_b = {action: prob for action, prob in zip(actions_b, policy_b_vec)}
-            
-            # Choose actions
-            action_a = self.agent_a.choose_action(actions_a, policy_a)
-            action_b = self.agent_b.choose_action(actions_b, policy_b)
-            
-            # Get rewards and next state
-            reward_a, reward_b, next_state = self.game.get_reward_and_next_state(
-                state, action_a, action_b
-            )
+            # Execute action
+            reward_a, reward_b, next_state = self.game.execute_action(state, action)
             
             total_reward_a += reward_a
             total_reward_b += reward_b
             
-            # Compute Nash Q for next state
-            next_nash_q_a = 0
-            if next_state != state:
-                next_pos_a, next_pos_b = self.game.state_to_positions(next_state)
-                next_actions_a = self.game.get_available_actions(next_pos_a)
-                next_actions_b = self.game.get_available_actions(next_pos_b)
-                
-                if next_actions_a and next_actions_b:
-                    next_payoff_a = self._compute_payoff_matrix(next_state, next_actions_a, next_actions_b, 0)
-                    next_policy_a, _, next_nash_q_a, _ = self.solver.solve_zero_sum(next_payoff_a)
+            # Get opponent's possible actions in next state
+            next_player = self.game.get_current_player()  # Turn already switched in execute_action
+            next_available_actions = self.game.get_available_actions(next_state, next_player)
             
-            # Update agents
-            self.agent_a.update(state, action_a, action_b, reward_a, next_nash_q_a)
-            self.agent_b.update(state, action_b, action_a, reward_b, -next_nash_q_a)
+            # Update Q-value for the player who just moved
+            if current_player == 0:
+                agent.update(state, action, reward_a, next_state, next_available_actions, opponent)
+            else:
+                agent.update(state, action, reward_b, next_state, next_available_actions, opponent)
+            
+            # Move to next state
+            state = next_state
             
             # Decay exploration
-            self.agent_a.decay_epsilon()
-            self.agent_b.decay_epsilon()
-            
-            # Next state
-            state = next_state
+            agent.decay_epsilon()
         
         return total_reward_a, total_reward_b
     
@@ -112,16 +83,27 @@ class NashQTrainer:
         
         return rewards_a, rewards_b
     
-    def get_policy(self, state):
-        """Get Nash policy for a state"""
-        pos_a, pos_b = self.game.state_to_positions(state)
-        actions_a = self.game.get_available_actions(pos_a)
-        actions_b = self.game.get_available_actions(pos_b)
+    def get_policy(self, state, player=0):
+        """Get policy for a state and player"""
+        available_actions = self.game.get_available_actions(state, player)
         
-        payoff_a = self._compute_payoff_matrix(state, actions_a, actions_b, 0)
-        policy_a_vec, policy_b_vec, nash_q_a, nash_q_b = self.solver.solve_zero_sum(payoff_a)
+        if not available_actions:
+            return {}, 0
         
-        policy_a = {action: prob for action, prob in zip(actions_a, policy_a_vec)}
-        policy_b = {action: prob for action, prob in zip(actions_b, policy_b_vec)}
+        if player == 0:
+            agent = self.agent_a
+        else:
+            agent = self.agent_b
         
-        return policy_a, policy_b, nash_q_a, nash_q_b
+        # Create policy based on Q-values
+        q_values = [agent.get_q_value(state, a) for a in available_actions]
+        
+        # Softmax policy
+        q_values = np.array(q_values)
+        exp_q = np.exp(q_values - np.max(q_values))  # Numerical stability
+        probs = exp_q / np.sum(exp_q)
+        
+        policy = {action: prob for action, prob in zip(available_actions, probs)}
+        expected_value = np.sum(q_values * probs)
+        
+        return policy, expected_value
