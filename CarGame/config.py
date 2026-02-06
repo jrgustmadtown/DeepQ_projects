@@ -1,4 +1,4 @@
-GRID_SIZE = 5
+GRID_SIZE = 9
 ACTIONS = ['up', 'down', 'left', 'right']
 AGENT_A_START = (0, 0)
 CRASH_REWARD = 10
