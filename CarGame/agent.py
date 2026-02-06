@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import nashpy as nash
 
-from config import DISCOUNT_FACTOR, LEARNING_RATE, EPSILON, Q_INIT_SCALE
+from config import DISCOUNT_FACTOR, LEARNING_RATE, EPSILON, Q_INIT_SCALE, FP_ITERATIONS
 
 
 class NashQAgent:
@@ -78,10 +78,11 @@ class NashQAgent:
         except:
             equilibria = []
 
-        if not equilibria:
-            return 0.0, self._uniform_policy_for_state(state)
+        if not equilibria or len(equilibria) != 1:
+            pi_a, pi_b = self._fictitious_play(Q_a_sub, Q_b_sub)
+        else:
+            pi_a, pi_b = equilibria[0]
 
-        pi_a, pi_b = equilibria[0]
         pi_a = np.array(pi_a, dtype=float)
         pi_b = np.array(pi_b, dtype=float)
         if pi_a.sum() <= 0 or pi_b.sum() <= 0:
@@ -102,6 +103,20 @@ class NashQAgent:
         if self.player == 'A':
             return value_a, policy_a_full
         return value_b, policy_b_full
+
+    def _fictitious_play(self, Q_a_sub, Q_b_sub):
+        game = nash.Game(Q_a_sub, Q_b_sub)
+        try:
+            fp_iter = game.fictitious_play(iterations=FP_ITERATIONS)
+            last = None
+            for last in fp_iter:
+                pass
+            if last is None:
+                return np.ones(Q_a_sub.shape[0]) / Q_a_sub.shape[0], np.ones(Q_a_sub.shape[1]) / Q_a_sub.shape[1]
+            pi_a, pi_b = last
+            return pi_a, pi_b
+        except:
+            return np.ones(Q_a_sub.shape[0]) / Q_a_sub.shape[0], np.ones(Q_a_sub.shape[1]) / Q_a_sub.shape[1]
 
     def count_equilibria(self, state, opponent_q_values):
         idx_a, idx_b = self._action_indices_for_state(state)

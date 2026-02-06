@@ -90,8 +90,7 @@ class CarGameEnvironment:
                     for b_col in range(self.grid_size):
                         pos_a = (a_row, a_col)
                         pos_b = (b_row, b_col)
-                        if pos_a != pos_b:
-                            states.append((pos_a, pos_b))
+                        states.append((pos_a, pos_b))
         return states
 
     def get_all_joint_actions(self):

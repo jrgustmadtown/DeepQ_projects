@@ -13,7 +13,7 @@ def plot_training_results(convergence_a, convergence_b, env, save_path='car_game
     _plot_game_info(axes[1, 1], env)
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.show()
+    plt.close(fig)
 
 
 def _plot_convergence(ax, values_a, values_b):
@@ -111,26 +111,41 @@ def plot_policy(agent, env, state=None, save_path='policy_visualization.png'):
                f'{prob:.2f}', ha='center', fontsize=10)
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.show()
+    plt.close(fig)
 
 
-def plot_state_policy(agent_a, agent_b, env, state, save_path):
+def plot_state_policy(agent_a, agent_b, env, state, save_path, steps=None):
     fig, ax = plt.subplots(figsize=(4, 4))
     n = env.grid_size
+    if steps is None:
+        steps = n
     ax.set_xlim(-0.5, n - 0.5)
     ax.set_ylim(n - 0.5, -0.5)
     ax.set_xticks(range(n))
     ax.set_yticks(range(n))
     ax.grid(True, alpha=0.4)
     ax.set_aspect('equal')
-    pos_a, pos_b = state
-    ax.scatter([pos_a[1]], [pos_a[0]], color='blue', s=80)
-    ax.scatter([pos_b[1]], [pos_b[0]], color='red', s=80)
-    policy_a = agent_a.get_policy_for_state(state)
-    policy_b = agent_b.get_policy_for_state(state)
-    _draw_policy_arrows(ax, pos_a, policy_a, 'blue')
-    _draw_policy_arrows(ax, pos_b, policy_b, 'red')
-    ax.set_title(f"{pos_a[0]},{pos_a[1]},{pos_b[0]},{pos_b[1]}", fontsize=10)
+
+    start_a, start_b = state
+    current_state = state
+    blue_offset = (-0.08, -0.08)
+    red_offset = (0.08, 0.08)
+
+    for step in range(steps):
+        alpha = max(0.1, 1.0 - (step * 0.3))
+        pos_a, pos_b = current_state
+        policy_a = agent_a.get_policy_for_state(current_state)
+        policy_b = agent_b.get_policy_for_state(current_state)
+        _draw_policy_arrows(ax, pos_a, policy_a, 'blue', alpha, blue_offset)
+        _draw_policy_arrows(ax, pos_b, policy_b, 'red', alpha, red_offset)
+
+        action_a = _select_action_from_policy(policy_a, env.get_available_actions(pos_a))
+        action_b = _select_action_from_policy(policy_b, env.get_available_actions(pos_b))
+        next_pos_a = env.get_next_position(pos_a, action_a)
+        next_pos_b = env.get_next_position(pos_b, action_b)
+        current_state = (next_pos_a, next_pos_b)
+
+    ax.set_title(f"{start_a[0]},{start_a[1]},{start_b[0]},{start_b[1]}", fontsize=10)
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
@@ -138,11 +153,17 @@ def plot_state_policy(agent_a, agent_b, env, state, save_path):
 
 def save_all_state_policies(agent_a, agent_b, env, output_dir='policy_states'):
     os.makedirs(output_dir, exist_ok=True)
+    for name in os.listdir(output_dir):
+        path = os.path.join(output_dir, name)
+        if os.path.isfile(path):
+            os.remove(path)
     for state in env.get_all_states():
         pos_a, pos_b = state
+        if not _is_single_arrow_state(agent_a, agent_b, state):
+            continue
         filename = f"A{pos_a[0]}_{pos_a[1]}_B{pos_b[0]}_{pos_b[1]}.png"
         save_path = os.path.join(output_dir, filename)
-        plot_state_policy(agent_a, agent_b, env, state, save_path)
+        plot_state_policy(agent_a, agent_b, env, state, save_path, steps=env.grid_size)
 
 
 def compute_average_value(agent):
@@ -153,18 +174,37 @@ def compute_average_value(agent):
     return np.mean(values) if values else 0.0
 
 
-def _draw_policy_arrows(ax, pos, policy, color):
+def _draw_policy_arrows(ax, pos, policy, color, alpha=1.0, offset=(0.0, 0.0)):
     action_map = {
         'up': (0, -1),
         'down': (0, 1),
         'left': (-1, 0),
         'right': (1, 0)
     }
-    x, y = pos[1], pos[0]
+    x, y = pos[1] + offset[0], pos[0] + offset[1]
     for action, prob in policy.items():
         if prob <= 0 or action not in action_map:
             continue
         dx, dy = action_map[action]
         ax.arrow(x, y, dx * prob, dy * prob,
                  head_width=0.08, head_length=0.08,
-                 length_includes_head=True, color=color, alpha=0.9)
+                 length_includes_head=True, color=color, alpha=alpha)
+
+
+def _select_action_from_policy(policy, available_actions):
+    best_action = available_actions[0]
+    best_prob = policy.get(best_action, 0.0)
+    for action in available_actions[1:]:
+        prob = policy.get(action, 0.0)
+        if prob > best_prob:
+            best_prob = prob
+            best_action = action
+    return best_action
+
+
+def _is_single_arrow_state(agent_a, agent_b, state, threshold=0.99):
+    policy_a = agent_a.get_policy_for_state(state)
+    policy_b = agent_b.get_policy_for_state(state)
+    max_a = max(policy_a.values()) if policy_a else 0.0
+    max_b = max(policy_b.values()) if policy_b else 0.0
+    return max_a >= threshold and max_b >= threshold
