@@ -1,11 +1,12 @@
 import random
+import warnings
 import numpy as np
-from scipy.optimize import linprog
+import nashpy as nash
 
-from config import DISCOUNT_FACTOR, LEARNING_RATE, EPSILON
+from config import DISCOUNT_FACTOR, LEARNING_RATE, EPSILON, Q_INIT_SCALE
 
 
-class MinimaxQAgent:
+class NashQAgent:
     def __init__(self, environment, player='A', learning_rate=LEARNING_RATE,
                  discount_factor=DISCOUNT_FACTOR, epsilon=EPSILON):
         self.env = environment
@@ -22,7 +23,10 @@ class MinimaxQAgent:
 
     def _initialize(self):
         for state in self.env.get_all_states():
-            self.q_values[state] = np.zeros((self.num_actions, self.num_actions))
+            self.q_values[state] = np.random.uniform(
+                low=-Q_INIT_SCALE, high=Q_INIT_SCALE,
+                size=(self.num_actions, self.num_actions)
+            )
             self.state_values[state] = 0.0
             self.policy[state] = self._uniform_policy_for_state(state)
 
@@ -45,62 +49,76 @@ class MinimaxQAgent:
 
     def get_q_matrix(self, state):
         if state not in self.q_values:
-            self.q_values[state] = np.zeros((self.num_actions, self.num_actions))
+            self.q_values[state] = np.random.uniform(
+                low=-Q_INIT_SCALE, high=Q_INIT_SCALE,
+                size=(self.num_actions, self.num_actions)
+            )
         return self.q_values[state]
 
-    def compute_minimax_value_and_policy(self, state):
-        Q = self.get_q_matrix(state)
+    def _get_opponent_q(self, opponent_q_values, state):
+        if state in opponent_q_values:
+            return opponent_q_values[state]
+        return np.zeros((self.num_actions, self.num_actions))
+
+    def compute_nash_value_and_policy(self, state, opponent_q_values):
         idx_a, idx_b = self._action_indices_for_state(state)
-        if self.player == 'A':
-            n = len(idx_a)
-            m = len(idx_b)
-            Q_sub = Q[np.ix_(idx_a, idx_b)]
-            c = np.zeros(n + 1)
-            c[-1] = -1
-            A_ub = np.zeros((m, n + 1))
-            for j in range(m):
-                A_ub[j, :n] = -Q_sub[:, j]
-                A_ub[j, -1] = 1
-            b_ub = np.zeros(m)
-            A_eq = np.zeros((1, n + 1))
-            A_eq[0, :n] = 1
-            b_eq = np.array([1.0])
-            bounds = [(0, 1) for _ in range(n)] + [(None, None)]
-        else:
-            n = len(idx_b)
-            m = len(idx_a)
-            Q_sub = Q[np.ix_(idx_a, idx_b)]
-            c = np.zeros(n + 1)
-            c[-1] = 1
-            A_ub = np.zeros((m, n + 1))
-            for i in range(m):
-                A_ub[i, :n] = Q_sub[i, :]
-                A_ub[i, -1] = -1
-            b_ub = np.zeros(m)
-            A_eq = np.zeros((1, n + 1))
-            A_eq[0, :n] = 1
-            b_eq = np.array([1.0])
-            bounds = [(0, 1) for _ in range(n)] + [(None, None)]
+        Q_a = self.get_q_matrix(state)
+        Q_b = self._get_opponent_q(opponent_q_values, state)
+        Q_a_sub = Q_a[np.ix_(idx_a, idx_b)]
+        Q_b_sub = Q_b[np.ix_(idx_a, idx_b)]
+
+        if Q_a_sub.size == 0 or Q_b_sub.size == 0:
+            return 0.0, self._uniform_policy_for_state(state)
 
         try:
-            result = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq,
-                           bounds=bounds, method='highs')
-            if result.success:
-                policy = result.x[:n]
-                policy = np.maximum(policy, 0)
-                policy = policy / policy.sum()
-                value = result.x[-1]
-                policy_full = np.zeros(self.num_actions)
-                if self.player == 'A':
-                    for i, idx in enumerate(idx_a):
-                        policy_full[idx] = policy[i]
-                else:
-                    for i, idx in enumerate(idx_b):
-                        policy_full[idx] = policy[i]
-                return value, policy_full
+            game = nash.Game(Q_a_sub, Q_b_sub)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                equilibria = list(game.support_enumeration())
         except:
-            pass
-        return 0.0, self._uniform_policy_for_state(state)
+            equilibria = []
+
+        if not equilibria:
+            return 0.0, self._uniform_policy_for_state(state)
+
+        pi_a, pi_b = equilibria[0]
+        pi_a = np.array(pi_a, dtype=float)
+        pi_b = np.array(pi_b, dtype=float)
+        if pi_a.sum() <= 0 or pi_b.sum() <= 0:
+            return 0.0, self._uniform_policy_for_state(state)
+
+        pi_a = pi_a / pi_a.sum()
+        pi_b = pi_b / pi_b.sum()
+        value_a = float(pi_a @ Q_a_sub @ pi_b)
+        value_b = float(pi_a @ Q_b_sub @ pi_b)
+
+        policy_a_full = np.zeros(self.num_actions)
+        policy_b_full = np.zeros(self.num_actions)
+        for i, idx in enumerate(idx_a):
+            policy_a_full[idx] = pi_a[i]
+        for i, idx in enumerate(idx_b):
+            policy_b_full[idx] = pi_b[i]
+
+        if self.player == 'A':
+            return value_a, policy_a_full
+        return value_b, policy_b_full
+
+    def count_equilibria(self, state, opponent_q_values):
+        idx_a, idx_b = self._action_indices_for_state(state)
+        Q_a = self.get_q_matrix(state)
+        Q_b = self._get_opponent_q(opponent_q_values, state)
+        Q_a_sub = Q_a[np.ix_(idx_a, idx_b)]
+        Q_b_sub = Q_b[np.ix_(idx_a, idx_b)]
+        if Q_a_sub.size == 0 or Q_b_sub.size == 0:
+            return 0
+        try:
+            game = nash.Game(Q_a_sub, Q_b_sub)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                equilibria = list(game.support_enumeration())
+            return len(equilibria)
+        except:
+            return 0
 
     def choose_action(self, state):
         pos = state[0] if self.player == 'A' else state[1]
@@ -120,25 +138,31 @@ class MinimaxQAgent:
         return available[action_idx]
 
     def _initialize_state(self, state):
-        self.q_values[state] = np.zeros((self.num_actions, self.num_actions))
+        self.q_values[state] = np.random.uniform(
+            low=-Q_INIT_SCALE, high=Q_INIT_SCALE,
+            size=(self.num_actions, self.num_actions)
+        )
         self.state_values[state] = 0.0
         self.policy[state] = self._uniform_policy_for_state(state)
 
-    def update(self, state, action_a, action_b, reward, next_state, done):
+    def update(self, state, action_a, action_b, reward_a, reward_b, next_state, done, opponent_q_values):
         if state not in self.q_values:
             self._initialize_state(state)
+
         idx_a = self.actions.index(action_a)
         idx_b = self.actions.index(action_b)
+        reward = reward_a if self.player == 'A' else reward_b
+
         if done:
             next_value = 0
         else:
-            if next_state not in self.state_values:
-                self._initialize_state(next_state)
-            next_value = self.state_values[next_state]
+            next_value, _ = self.compute_nash_value_and_policy(next_state, opponent_q_values)
+
         current_q = self.q_values[state][idx_a, idx_b]
         target = reward + self.discount_factor * next_value
         self.q_values[state][idx_a, idx_b] += self.learning_rate * (target - current_q)
-        value, policy = self.compute_minimax_value_and_policy(state)
+
+        value, policy = self.compute_nash_value_and_policy(state, opponent_q_values)
         self.state_values[state] = value
         self.policy[state] = policy
 

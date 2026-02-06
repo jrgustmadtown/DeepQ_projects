@@ -1,5 +1,3 @@
-import random
-
 from config import GRID_SIZE, ACTIONS, AGENT_A_START, CRASH_REWARD
 
 
@@ -73,18 +71,14 @@ class CarGameEnvironment:
         next_pos_b = self.get_next_position(pos_b, action_b)
         next_state = (next_pos_a, next_pos_b)
         if next_pos_a == next_pos_b:
-            if random.random() < 0.5:
-                reward_a = CRASH_REWARD
-                reward_b = -CRASH_REWARD
-            else:
-                reward_a = -CRASH_REWARD
-                reward_b = CRASH_REWARD
-            done = True
+            reward_a = -CRASH_REWARD
+            reward_b = -CRASH_REWARD
+            done = False
         else:
             reward_a_square = self.get_square_reward(next_pos_a)
             reward_b_square = self.get_square_reward(next_pos_b)
-            reward_a = reward_a_square - reward_b_square
-            reward_b = -reward_a
+            reward_a = reward_a_square
+            reward_b = reward_b_square
             done = False
         return next_state, (reward_a, reward_b), done
 

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 
 from environment import CarGameEnvironment
-from agent import MinimaxQAgent, IndependentQLearningAgent
-from visualization import plot_training_results, compute_average_value, plot_policy, save_all_state_policies
-from config import EPISODES, MAX_STEPS_PER_EPISODE
+from agent import NashQAgent, IndependentQLearningAgent
+from visualization import plot_training_results, compute_average_value, save_all_state_policies
+from config import EPISODES, MAX_STEPS_PER_EPISODE, EPSILON, EPSILON_MIN, EPSILON_DECAY
 
 
-def train(episodes=EPISODES, use_minimax=True, visualize=True):
+def train(episodes=EPISODES, use_nash=True, visualize=True):
     env = CarGameEnvironment()
-    if use_minimax:
-        agent_a = MinimaxQAgent(env, player='A')
-        agent_b = MinimaxQAgent(env, player='B')
+    if use_nash:
+        agent_a = NashQAgent(env, player='A')
+        agent_b = NashQAgent(env, player='B')
     else:
         agent_a = IndependentQLearningAgent(env, player='A')
         agent_b = IndependentQLearningAgent(env, player='B')
@@ -19,6 +19,9 @@ def train(episodes=EPISODES, use_minimax=True, visualize=True):
     convergence_b = []
 
     for episode in range(1, episodes + 1):
+        current_epsilon = max(EPSILON_MIN, EPSILON * (EPSILON_DECAY ** (episode - 1)))
+        agent_a.epsilon = current_epsilon
+        agent_b.epsilon = current_epsilon
         state = env.reset()
         done = False
         steps = 0
@@ -28,9 +31,9 @@ def train(episodes=EPISODES, use_minimax=True, visualize=True):
             action_b = agent_b.choose_action(state)
             joint_action = (action_a, action_b)
             next_state, (reward_a, reward_b), done = env.step(state, joint_action)
-            if use_minimax:
-                agent_a.update(state, action_a, action_b, reward_a, next_state, done)
-                agent_b.update(state, action_a, action_b, reward_b, next_state, done)
+            if use_nash:
+                agent_a.update(state, action_a, action_b, reward_a, reward_b, next_state, done, agent_b.q_values)
+                agent_b.update(state, action_a, action_b, reward_a, reward_b, next_state, done, agent_a.q_values)
             else:
                 agent_a.update(state, action_a, reward_a, next_state, done)
                 agent_b.update(state, action_b, reward_b, next_state, done)
@@ -47,6 +50,15 @@ def train(episodes=EPISODES, use_minimax=True, visualize=True):
 
     if visualize:
         plot_training_results(convergence_a, convergence_b, env)
+
+    if use_nash:
+        total_states = 0
+        states_with_nash = 0
+        for state in env.get_all_states():
+            total_states += 1
+            if agent_a.count_equilibria(state, agent_b.q_values) > 0:
+                states_with_nash += 1
+        print(f"{states_with_nash}/{total_states}")
 
     return agent_a, agent_b, convergence_a, convergence_b
 
@@ -77,7 +89,7 @@ def play_game(agent_a, agent_b, env=None):
 
 
 def main():
-    agent_a, agent_b, _, _ = train(use_minimax=True)
+    agent_a, agent_b, _, _ = train(use_nash=True)
     env = CarGameEnvironment()
     save_all_state_policies(agent_a, agent_b, env)
     play_game(agent_a, agent_b, env)

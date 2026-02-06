@@ -68,7 +68,7 @@ def _plot_game_value(ax, values_a):
 def _plot_game_info(ax, env):
     ax.axis('off')
     info_text = f"""
-    Zero-Sum Car Game
+    General-Sum Car Game
 
     Grid Size: {env.grid_size} x {env.grid_size}
 
@@ -76,16 +76,16 @@ def _plot_game_info(ax, env):
     - Agents start at opposite corners
     - Move simultaneously each turn
     - Square reward = 2^(dist to nearest corner)
-    - Zero-sum: A gains = B loses
+    - General-sum rewards for each agent
 
     Crash (same square):
-    - Agent A: +{CRASH_REWARD}
+    - Agent A: -{CRASH_REWARD}
     - Agent B: -{CRASH_REWARD}
 
     Actions: {', '.join(env.actions)}
 
-    Algorithm: Minimax-Q Learning
-    (Markov Perfect Equilibrium)
+    Algorithm: Nash-Q Learning
+    (General-Sum Nash Equilibrium)
     """
     ax.text(0.1, 0.9, info_text, transform=ax.transAxes, fontsize=11,
            verticalalignment='top', fontfamily='monospace',
