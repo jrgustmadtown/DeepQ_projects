@@ -1,73 +1,87 @@
 #!/usr/bin/env python3
-"""
-Q-Learning Implementation for Grid World Environment
 
-This is the main entry point for training a Q-learning agent
-in a grid world environment.
-
-Run this file to start training:
-    python main.py
-"""
-
-from environment import GridWorld
-from agent import QLearningAgent
-from visualization import plot_results, compute_average_value
-from config import EPISODES, REPORT_EPISODES
+from environment import CarGameEnvironment
+from agent import MinimaxQAgent, IndependentQLearningAgent
+from visualization import plot_training_results, compute_average_value, plot_policy, save_all_state_policies
+from config import EPISODES, MAX_STEPS_PER_EPISODE
 
 
-def train(episodes=EPISODES, report_episodes=REPORT_EPISODES, visualize=True):
-    """
-    Train a Q-learning agent in the grid world environment.
-    
-    Args:
-        episodes: Number of training episodes
-        report_episodes: List of episode numbers to print Q-values
-        visualize: Whether to show visualization after training
-    
-    Returns:
-        agent: The trained QLearningAgent
-        convergence_values: List of average state values per episode
-    """
-    # Initialize environment and agent
-    env = GridWorld()
-    agent = QLearningAgent(env)
-    
-    # Track average state values for convergence plot
-    convergence_values = []
-    
-    print("Starting Q-Learning Training...")
-    print(f"Episodes: {episodes}")
-    print(f"Grid size: {env.rows}x{env.cols}")
-    print(f"Terminal states: {list(env.terminal_states.keys())}")
-    print("-" * 40)
-    
-    # Training loop
+def train(episodes=EPISODES, use_minimax=True, visualize=True):
+    env = CarGameEnvironment()
+    if use_minimax:
+        agent_a = MinimaxQAgent(env, player='A')
+        agent_b = MinimaxQAgent(env, player='B')
+    else:
+        agent_a = IndependentQLearningAgent(env, player='A')
+        agent_b = IndependentQLearningAgent(env, player='B')
+
+    convergence_a = []
+    convergence_b = []
+
     for episode in range(1, episodes + 1):
-        # Run one episode
-        steps = agent.train_episode()
-        
-        # Report Q-values at specified episodes
-        if episode in report_episodes:
-            agent.print_q_values(episode)
-        
-        # Track average value for convergence plot
-        avg_value = compute_average_value(agent)
-        convergence_values.append(avg_value)
-    
-    print("-" * 40)
-    print("Training complete!")
-    
-    # Visualize results
+        state = env.reset()
+        done = False
+        steps = 0
+
+        while not done and steps < MAX_STEPS_PER_EPISODE:
+            action_a = agent_a.choose_action(state)
+            action_b = agent_b.choose_action(state)
+            joint_action = (action_a, action_b)
+            next_state, (reward_a, reward_b), done = env.step(state, joint_action)
+            if use_minimax:
+                agent_a.update(state, action_a, action_b, reward_a, next_state, done)
+                agent_b.update(state, action_a, action_b, reward_b, next_state, done)
+            else:
+                agent_a.update(state, action_a, reward_a, next_state, done)
+                agent_b.update(state, action_b, reward_b, next_state, done)
+            state = next_state
+            steps += 1
+
+        avg_a = compute_average_value(agent_a)
+        avg_b = compute_average_value(agent_b)
+        convergence_a.append(avg_a)
+        convergence_b.append(avg_b)
+
+        if episode % 10 == 0:
+            print(f"{episode}")
+
     if visualize:
-        plot_results(agent, convergence_values, report_episodes)
-    
-    return agent, convergence_values
+        plot_training_results(convergence_a, convergence_b, env)
+
+    return agent_a, agent_b, convergence_a, convergence_b
+
+
+def play_game(agent_a, agent_b, env=None):
+    if env is None:
+        env = CarGameEnvironment()
+    old_eps_a = agent_a.epsilon
+    old_eps_b = agent_b.epsilon
+    agent_a.epsilon = 0
+    agent_b.epsilon = 0
+    state = env.reset()
+    done = False
+    steps = 0
+    total_reward_a = 0
+
+    while not done and steps < MAX_STEPS_PER_EPISODE:
+        action_a = agent_a.choose_action(state)
+        action_b = agent_b.choose_action(state)
+        next_state, (reward_a, reward_b), done = env.step(state, (action_a, action_b))
+        total_reward_a += reward_a
+        state = next_state
+        steps += 1
+
+    agent_a.epsilon = old_eps_a
+    agent_b.epsilon = old_eps_b
+    return total_reward_a
 
 
 def main():
-    """Main entry point."""
-    agent, convergence_values = train()
-    return agent
+    agent_a, agent_b, _, _ = train(use_minimax=True)
+    env = CarGameEnvironment()
+    save_all_state_policies(agent_a, agent_b, env)
+    play_game(agent_a, agent_b, env)
+    return agent_a, agent_b
 
 
 if __name__ == '__main__':

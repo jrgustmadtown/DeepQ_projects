@@ -1,102 +1,108 @@
-# Grid World Environment for Q-Learning
-
 import random
-from config import (
-    ROWS, COLS, ACTIONS, TERMINAL_STATES, 
-    BLOCKED_STATES, REWARD, ACTION_SUCCESS_PROB
-)
+
+from config import GRID_SIZE, ACTIONS, AGENT_A_START, CRASH_REWARD
 
 
-class GridWorld:
-    """
-    A grid world environment for reinforcement learning.
-    
-    The agent navigates a grid with terminal states (goals), 
-    blocked states (obstacles), and stochastic transitions.
-    """
-    
-    def __init__(self):
-        self.rows = ROWS
-        self.cols = COLS
+class CarGameEnvironment:
+    def __init__(self, grid_size=GRID_SIZE):
+        self.grid_size = grid_size
+        self.rows = grid_size
+        self.cols = grid_size
         self.actions = ACTIONS
-        self.terminal_states = TERMINAL_STATES
-        self.blocked_states = BLOCKED_STATES
-        self.step_reward = REWARD
-        self.action_success_prob = ACTION_SUCCESS_PROB
-        
-    def is_valid_state(self, state):
-        """Check if a state is within bounds and not blocked."""
-        row, col = state
-        in_bounds = (0 <= row < self.rows) and (0 <= col < self.cols)
-        not_blocked = state not in self.blocked_states
-        return in_bounds and not_blocked
-    
-    def is_terminal(self, state):
-        """Check if a state is a terminal state."""
-        return state in self.terminal_states
-    
-    def get_valid_states(self):
-        """Return a list of all valid (non-blocked) states."""
-        valid = []
-        for row in range(self.rows):
-            for col in range(self.cols):
-                state = (row, col)
-                if self.is_valid_state(state):
-                    valid.append(state)
-        return valid
-    
-    def get_non_terminal_states(self):
-        """Return valid states that are not terminal."""
-        return [s for s in self.get_valid_states() if not self.is_terminal(s)]
-    
-    def get_next_state(self, state, action):
-        """
-        Get the next state given current state and action.
-        
-        Transitions are stochastic: action succeeds with ACTION_SUCCESS_PROB,
-        otherwise the agent stays in place.
-        """
-        next_state = state  # Default: stay put
-        
-        # Action succeeds with specified probability
-        if random.random() < self.action_success_prob:
-            row, col = state
-            if action == 'up':
-                next_state = (row - 1, col)
-            elif action == 'down':
-                next_state = (row + 1, col)
-            elif action == 'left':
-                next_state = (row, col - 1)
-            elif action == 'right':
-                next_state = (row, col + 1)
-        
-        # If next state is invalid, stay in current state
-        if not self.is_valid_state(next_state):
-            next_state = state
-        
-        return next_state
-    
-    def get_reward(self, state):
-        """Get the reward for reaching a state."""
-        if state in self.terminal_states:
-            return self.terminal_states[state]
-        return self.step_reward
-    
+        self.start_a = AGENT_A_START
+        self.start_b = (grid_size - 1, grid_size - 1)
+        self.square_rewards = self._compute_square_rewards()
+
+    def _compute_square_rewards(self):
+        rewards = {}
+        corners = [
+            (0, 0),
+            (0, self.grid_size - 1),
+            (self.grid_size - 1, 0),
+            (self.grid_size - 1, self.grid_size - 1)
+        ]
+        for row in range(self.grid_size):
+            for col in range(self.grid_size):
+                min_dist = min(abs(row - cr) + abs(col - cc) for cr, cc in corners)
+                rewards[(row, col)] = 2 ** min_dist
+        return rewards
+
+    def get_square_reward(self, position):
+        return self.square_rewards.get(position, 0)
+
+    def get_available_actions(self, pos):
+        row, col = pos
+        actions = []
+        if row > 0:
+            actions.append('up')
+        if row < self.grid_size - 1:
+            actions.append('down')
+        if col > 0:
+            actions.append('left')
+        if col < self.grid_size - 1:
+            actions.append('right')
+        return actions
+
+    def is_valid_position(self, pos):
+        row, col = pos
+        return 0 <= row < self.grid_size and 0 <= col < self.grid_size
+
+    def get_next_position(self, pos, action):
+        row, col = pos
+        if action == 'up':
+            next_pos = (row - 1, col)
+        elif action == 'down':
+            next_pos = (row + 1, col)
+        elif action == 'left':
+            next_pos = (row, col - 1)
+        elif action == 'right':
+            next_pos = (row, col + 1)
+        else:
+            next_pos = (row, col)
+        if not self.is_valid_position(next_pos):
+            next_pos = pos
+        return next_pos
+
     def reset(self):
-        """Reset environment and return a random starting state."""
-        non_terminal = self.get_non_terminal_states()
-        return random.choice(non_terminal)
-    
-    def step(self, state, action):
-        """
-        Take an action from a state.
-        
-        Returns:
-            next_state: The resulting state
-            reward: The reward received
-            done: Whether the episode is finished (terminal state reached)
-        """
-        next_state = self.get_next_state(state, action)
-        reward = self.get_reward(next_state)
-        done = self.is_terminal(next_state)
-        return next_state, reward, done
+        return (self.start_a, self.start_b)
+
+    def step(self, state, joint_action):
+        pos_a, pos_b = state
+        action_a, action_b = joint_action
+        next_pos_a = self.get_next_position(pos_a, action_a)
+        next_pos_b = self.get_next_position(pos_b, action_b)
+        next_state = (next_pos_a, next_pos_b)
+        if next_pos_a == next_pos_b:
+            if random.random() < 0.5:
+                reward_a = CRASH_REWARD
+                reward_b = -CRASH_REWARD
+            else:
+                reward_a = -CRASH_REWARD
+                reward_b = CRASH_REWARD
+            done = True
+        else:
+            reward_a_square = self.get_square_reward(next_pos_a)
+            reward_b_square = self.get_square_reward(next_pos_b)
+            reward_a = reward_a_square - reward_b_square
+            reward_b = -reward_a
+            done = False
+        return next_state, (reward_a, reward_b), done
+
+    def get_all_states(self):
+        states = []
+        for a_row in range(self.grid_size):
+            for a_col in range(self.grid_size):
+                for b_row in range(self.grid_size):
+                    for b_col in range(self.grid_size):
+                        pos_a = (a_row, a_col)
+                        pos_b = (b_row, b_col)
+                        if pos_a != pos_b:
+                            states.append((pos_a, pos_b))
+        return states
+
+    def get_all_joint_actions(self):
+        joint_actions = []
+        for a_action in self.actions:
+            for b_action in self.actions:
+                joint_actions.append((a_action, b_action))
+        return joint_actions
